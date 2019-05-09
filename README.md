@@ -1,212 +1,108 @@
-Apache Kafka
-=================
-See our [web site](https://kafka.apache.org) for details on the project.
+基于0.10
 
-You need to have [Gradle](https://www.gradle.org/installation) and [Java](https://www.oracle.com/technetwork/java/javase/downloads/index.html) installed.
+# 1 kafka 入门
 
-Kafka requires Gradle 5.0 or higher.
+消息系统：作为消息系统的队列模式（点对点模式）和发布-订阅模式
+存储系统：同步阻塞发发送消息，等待消息完全地复制到多个节点，才认为这条消息发送成功  
+流处理系统：提供实时的流式数据处理能力：处理乱序、迟来的数据、重新处理输入数据、窗口和状态操作等
 
-Java 8 should be used for building in order to support both Java 8 and Java 11 at runtime.
+![][1]
 
-Scala 2.12 is used by default, see below for how to use a different Scala version or all of the supported Scala versions.
+四种核心 API：生产者、消费者、连接器、流处理  
+![][2]
 
-### First bootstrap and download the wrapper ###
-    cd kafka_source_dir
-    gradle
+## 1.2 基本概念
 
-Now everything else will work.
+### 1.2.1 分区模型
 
-### Build a jar and run it ###
-    ./gradlew jar
+![][3]
 
-Follow instructions in https://kafka.apache.org/documentation.html#quickstart
+每个主题（Topic）有多个分区（partition），每个消息入根据不同的 Topic 均匀的分散在其中的分区中，其中入分区的每个消息都带有一个自增的偏移量，分区通过偏移量（offset）来标识消费/写进度  
+  
+通过消费相同分区的消息，来保证有序性
 
-### Build source jar ###
-    ./gradlew srcJar
+### 1.2.2 消费模型
 
-### Build aggregated javadoc ###
-    ./gradlew aggregatedJavadoc
+推模型：由消息中心 Broker 推送消息到消费者，缺点在于，Broker 需要记录消息已发送/已消费/未消费状态值  
+拉模型：由消费者自己从消息中心 Broker 拉消息，这也是 kafka 选择的模式
 
-### Build javadoc and scaladoc ###
-    ./gradlew javadoc
-    ./gradlew javadocJar # builds a javadoc jar for each module
-    ./gradlew scaladoc
-    ./gradlew scaladocJar # builds a scaladoc jar for each module
-    ./gradlew docsJar # builds both (if applicable) javadoc and scaladoc jars for each module
+kafka 保存所有消息，无论是否消费。这样消费者可以根据偏移量重复消费之前的消息，或者跳着消费，缺点在于磁盘占用空间大，需要合理的设置消息清理时间，kafka 两天清理一次
 
-### Run unit/integration tests ###
-    ./gradlew test # runs both unit and integration tests
-    ./gradlew unitTest
-    ./gradlew integrationTest
-    
-### Force re-running tests without code change ###
-    ./gradlew cleanTest test
-    ./gradlew cleanTest unitTest
-    ./gradlew cleanTest integrationTest
+![][4]
 
-### Running a particular unit/integration test ###
-    ./gradlew clients:test --tests RequestResponseTest
+### 1.2.3 分布式模型
 
-### Running a particular test method within a unit/integration test ###
-    ./gradlew core:test --tests kafka.api.ProducerFailureHandlingTest.testCannotSendToInternalTopic
-    ./gradlew clients:test --tests org.apache.kafka.clients.MetadataTest.testMetadataUpdateWaitTime
+消息中心，即 Broker 作为服务端，而生产者和消费者作为客户端  
+Broker 主节点用于处理客户端们的消息读写，而 Broker 副节点用于消息的冗余，即为最小单位 partition 分区保证完整性，而采用分布式存储，主副节点支持故障转移  
+  
+消费者组支持纵向扩展，增加某个 Topic 消息吞吐量  
 
-### Running a particular unit/integration test with log4j output ###
-Change the log4j setting in either `clients/src/test/resources/log4j.properties` or `core/src/test/resources/log4j.properties`
+![][5]
 
-    ./gradlew clients:test --tests RequestResponseTest
+## 1.3 Kafka 的设计与实现
 
-### Generating test coverage reports ###
-Generate coverage reports for the whole project:
+### 1.3.1 文件系统的持久化与数据传输效率
 
-    ./gradlew reportCoverage
+预读：提前将一个比较大的磁盘块读入内存  
+后写：将很多小的逻辑写操作合并起来组合成一个大的物理写操作  
+磁盘缓存：将主内存剩余的所有空闲内存空间作为磁盘缓存，用于磁盘读写操作前的缓存  
+因此，在某些情况下，磁盘顺序读写比随机内存读写快  
+  
+正常写入磁盘都是，先用应用程序写入内存，然后刷新到磁盘。但是 kafka 先存入磁盘缓存，然后刷新到磁盘（这不一样么，磁盘缓存在某种角度来说也是内存。。。）  
+![][6]  
 
-Generate coverage for a single module, i.e.: 
+传统数据复制方案：操作系统将数据从磁盘读到内核空间的页面缓存->应用程序将数据从内核空间读到用户空间的缓存区->应用程序将数据从用户空间写回内核空间的 socket 缓存区->操作系统将数据从 socket 缓存区复制到王卡卡接口，通过网络发送出去    
 
-    ./gradlew clients:reportCoverage
-    
-### Building a binary release gzipped tar ball ###
-    ./gradlew clean releaseTarGz
+kafka 的零拷贝方案：操作系统将数据从磁盘读到内核空间的页面缓存区->操作系统将数据直接通过网卡接口通过网络发送出去  
 
-The above command will fail if you haven't set up the signing key. To bypass signing the artifact, you can run:
+10 个消费者情况下，传统方案，需要 10 * 4 = 40 次  
+零拷贝方案需要 10 + 1 = 11 次，其中的 1 次为从磁盘到内核空间的页面缓存
 
-    ./gradlew clean releaseTarGz -x signArchives
+![][7]
 
-The release file can be found inside `./core/build/distributions/`.
+### 1.3.2 生产者与消费者
 
-### Cleaning the build ###
-    ./gradlew clean
+生产者采用一种”在100ms内消息大小达到64字节要立即发送，如果在100ms时还没达到64字节，也要把已经收集的消息发送出去“，通过这种缓存机制，降低延迟以换取吞吐量  
+  
+消费者记录分区消费状态，好处在于消费者可以重新消费之前的消费。而消费状态是通过消费进度检查点文件实现，即在这个点之前的消息都已经被消费  
+消费者拉模型的缺点在于，如果消息中心（Broker）没有消息，而消费者还是继续处于一种轮询阻塞的方式请求。解决方法在于：消费者请求 Broker 时，通过消费者设置的”最低消费字节数“来判断 Broker 消息是否足够，从而是否立即返回或继续阻塞
 
-### Running a task with a particular version of Scala (either 2.11.x or 2.12.x) ###
-*Note that if building the jars with a version other than 2.12.x, you need to set the `SCALA_VERSION` variable or change it in `bin/kafka-run-class.sh` to run the quick start.*
+### 1.3.3 副本机制和容错处理
 
-You can pass either the major version (eg 2.12) or the full version (eg 2.12.7):
+每个 partition 在同一个节点上，可能为主，也有可能为从
+ 
+![][8]
 
-    ./gradlew -PscalaVersion=2.12 jar
-    ./gradlew -PscalaVersion=2.12 test
-    ./gradlew -PscalaVersion=2.12 releaseTarGz
+为了避免数据热点问题（主数据全在一个机器上），尽量保证每个节点作为不同 partition 的主或从
 
-### Running a task with all scala versions ###
+副节点与主节点通信方式和客户端与主节点通信类似，只不过副节点将消息持久化，而客户端是将消息消费  
+副节点正在同步中（in-sync）状态：1. 副节点与 zk 连接。2. 消息复制进度不能落后太多
 
-Append `All` to the task name:
-
-    ./gradlew testAll
-    ./gradlew jarAll
-    ./gradlew releaseTarGzAll
-
-### Running a task for a specific project ###
-This is for `core`, `examples` and `clients`
-
-    ./gradlew core:jar
-    ./gradlew core:test
-
-### Listing all gradle tasks ###
-    ./gradlew tasks
-
-### Building IDE project ####
-*Note that this is not strictly necessary (IntelliJ IDEA has good built-in support for Gradle projects, for example).*
-
-    ./gradlew eclipse
-    ./gradlew idea
-
-The `eclipse` task has been configured to use `${project_dir}/build_eclipse` as Eclipse's build directory. Eclipse's default
-build directory (`${project_dir}/bin`) clashes with Kafka's scripts directory and we don't use Gradle's build directory
-to avoid known issues with this configuration.
-
-### Publishing the jar for all version of Scala and for all projects to maven ###
-    ./gradlew uploadArchivesAll
-
-Please note for this to work you should create/update `${GRADLE_USER_HOME}/gradle.properties` (typically, `~/.gradle/gradle.properties`) and assign the following variables
-
-    mavenUrl=
-    mavenUsername=
-    mavenPassword=
-    signing.keyId=
-    signing.password=
-    signing.secretKeyRingFile=
-
-### Publishing the streams quickstart archetype artifact to maven ###
-For the Streams archetype project, one cannot use gradle to upload to maven; instead the `mvn deploy` command needs to be called at the quickstart folder:
-
-    cd streams/quickstart
-    mvn deploy
-
-Please note for this to work you should create/update user maven settings (typically, `${USER_HOME}/.m2/settings.xml`) to assign the following variables
-
-    <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
-       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
-                           https://maven.apache.org/xsd/settings-1.0.0.xsd">
-    ...                           
-    <servers>
-       ...
-       <server>
-          <id>apache.snapshots.https</id>
-          <username>${maven_username}</username>
-          <password>${maven_password}</password>
-       </server>
-       <server>
-          <id>apache.releases.https</id>
-          <username>${maven_username}</username>
-          <password>${maven_password}</password>
-        </server>
-        ...
-     </servers>
-     ...
+如何保证消息被消费者看到后，消息是真实存在磁盘中的：生产者发送消息提交到主节点，只有当副节点从主节点复制完消息后，该消息才会被消费者可见，这就是消息提交机制
 
 
-### Installing the jars to the local Maven repository ###
-    ./gradlew installAll
+# 2 生产者
 
-### Building the test jar ###
-    ./gradlew testJar
+## 2.1 新生产者客户端
 
-### Determining how transitive dependencies are added ###
-    ./gradlew core:dependencies --configuration runtime
+## 2.2 旧生产者客户端
 
-### Determining if any dependencies could be updated ###
-    ./gradlew dependencyUpdates
+## 2.3 服务端网络连接
 
-### Running code quality checks ###
-There are two code quality analysis tools that we regularly run, spotbugs and checkstyle.
 
-#### Checkstyle ####
-Checkstyle enforces a consistent coding style in Kafka.
-You can run checkstyle using:
 
-    ./gradlew checkstyleMain checkstyleTest
 
-The checkstyle warnings will be found in `reports/checkstyle/reports/main.html` and `reports/checkstyle/reports/test.html` files in the
-subproject build directories. They are also are printed to the console. The build will fail if Checkstyle fails.
 
-#### Spotbugs ####
-Spotbugs uses static analysis to look for bugs in the code.
-You can run spotbugs using:
 
-    ./gradlew spotbugsMain spotbugsTest -x test
 
-The spotbugs warnings will be found in `reports/spotbugs/main.html` and `reports/spotbugs/test.html` files in the subproject build
-directories.  Use -PxmlSpotBugsReport=true to generate an XML report instead of an HTML one.
 
-### Common build options ###
 
-The following options should be set with a `-P` switch, for example `./gradlew -PmaxParallelForks=1 test`.
 
-* `commitId`: sets the build commit ID as .git/HEAD might not be correct if there are local commits added for build purposes.
-* `mavenUrl`: sets the URL of the maven deployment repository (`file://path/to/repo` can be used to point to a local repository).
-* `maxParallelForks`: limits the maximum number of processes for each task.
-* `showStandardStreams`: shows standard out and standard error of the test JVM(s) on the console.
-* `skipSigning`: skips signing of artifacts.
-* `testLoggingEvents`: unit test events to be logged, separated by comma. For example `./gradlew -PtestLoggingEvents=started,passed,skipped,failed test`.
-* `xmlSpotBugsReport`: enable XML reports for spotBugs. This also disables HTML reports as only one can be enabled at a time.
-
-### Running in Vagrant ###
-
-See [vagrant/README.md](vagrant/README.md).
-
-### Contribution ###
-
-Apache Kafka is interested in building the community; we would welcome any thoughts or [patches](https://issues.apache.org/jira/browse/KAFKA). You can reach us [on the Apache mailing lists](http://kafka.apache.org/contact.html).
-
-To contribute follow the instructions here:
- * https://kafka.apache.org/contributing.html
+[1]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_1.png
+[2]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_2.jpg
+[3]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_3.png
+[4]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_4.png
+[5]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_5.png
+[6]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_6.png
+[7]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_7.png
+[8]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_8.png
