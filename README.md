@@ -85,11 +85,93 @@ kafka 的零拷贝方案：操作系统将数据从磁盘读到内核空间的�
 
 ## 2.1 新生产者客户端
 
-## 2.2 旧生产者客户端
+### 2.1.1 同步和异步发送消息
+
+#### 2.1.1.1 为消息选择分区
+
+消息如果没有带键，则通过 round-robin 选择 Broker，如果带有键，则对键散列后选则 Broker  
+主Broker负责外部的消息读写，然后与副Broker同步消息进度  
+![][2_1] 
+
+#### 2.1.1.2 客户端记录收集器
+
+生产者发送的消息先在客户端缓存到记录收集器 RecordAccumulator  
+![][2_2]
+
+### 2.1.2 客户端消息发送线程
+
+1. 根据分区进行发送消息：假如有两台服务器，每台服务器有三个分区，那么需要分别对分区发送消息，一共需要六次请求  
+2. 根据服务器节点发送消息：如上，只需要三个分区发一次即可，一共需要两次请求，kafka使用此方式  
+![][2_3]
+
+#### 2.1.2.1 从记录收集器获取数据
+
+#### 2.1.2.2 创建生产者客户端请求
+
+
+### 2.1.3 客户端网络连接对象
+
+#### 2.1.3.1 准备发送客户端请求
+
+#### 2.1.3.2 客户端轮询并调用回调函数
+
+inFlightRequests 缓存还没有收到响应的客户端请求，同一个服务端，如果上一个客户端请求还没有发送完成，则不允许发送新的客户端请求  
+
+1. 不需要响应的流程：在于请求发送成功后从 inFlightRequests 队列中移除
+2. 需要响应的流程：请求发送后，接收到完整响应后，从 inFlightRequests 队列中移除
+
+#### 2.1.3.3 客户端请求和客户端响应的关系
+
+1. 客户端请求（ClientRequest）：包含客户端发送的请求和回调处理器
+2. 客户端响应（ClientResponse）：包含了客户端请求头和客户端请求的回调函数以及其它响应信息
+
+### 2.1.4 选择器处理网络请求
+
+1. SocketChannel：channel.read(buffer)/channel.write(buffer) 缓冲区和通道数据交换
+2. Selector：发生听到的事件有读/写，选择器通过选择键的方式监听读写事件的发生  
+3. SelectionKey：将通道注册到选择器上， channel.register(selector) 返回对应选择键，进行逻辑处理
+
+#### 2.1.4.1 客户端连接服务端并建立 Kafka 通道
+
+KafkaChannel 抽象
+
+#### 2.1.4.2 Kafka 通道和网络传输层
+
+#### 2.1.4.3 Kafka 通道上的读写操作
+
+#### 2.1.4.4 选择器的轮询
+
+通过不断的注册事件、执行事件处理、取消事件  
+![][2_4]
 
 ## 2.3 服务端网络连接
 
+基于 Scala 的 Reactor模式，具体参考 Netty 的主从 Reactor 多线程模式：接收器线程+多个处理器线程
 
+### 2.3.1 服务端使用接收器接收客户端的连接
+
+### 2.3.2 处理器使用选择器的轮询处理网络请求 
+
+### 2.3.3 请求通道的请求队列和响应队列
+
+![][2_5]
+
+### 2.3.4 Kafka 请求处理线程
+
+一个接收器线程、多个处理器  
+一个请求通道、一个请求队列、多个响应队列  
+一个请求处理线程连接池、多个请求处理线程、一个服务端请求入口
+
+### 2.3.5 服务端的请求处理入口
+
+# 3 消费者：高级API和低级API
+
+![][3_1]  
+  
+一个分区只可被消费组中的一个消费者所消费：  
+1. 一个消费组中，一个消费者可以消费多个分区
+2. 每个消费组都会全量消费所有分区
+3. 同一个消费组下的消费者们不重复的共同消费所有分区
 
 
 
@@ -106,3 +188,9 @@ kafka 的零拷贝方案：操作系统将数据从磁盘读到内核空间的�
 [6]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_6.png
 [7]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_7.png
 [8]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/1_8.png
+[2_1]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/2_1.png
+[2_2]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/2_2.png
+[2_3]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/2_3.png
+[2_4]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/2_4.png
+[2_5]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/2_5.png
+[3_1]: https://leran2deeplearnjavawebtech.oss-cn-beijing.aliyuncs.com/learn/Kafka%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95/3_1.png

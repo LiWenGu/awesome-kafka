@@ -16,7 +16,6 @@
  */
 package org.apache.kafka.common.network;
 
-import java.net.SocketAddress;
 import org.apache.kafka.common.errors.AuthenticationException;
 import org.apache.kafka.common.memory.MemoryPool;
 import org.apache.kafka.common.security.auth.KafkaPrincipal;
@@ -25,6 +24,7 @@ import org.apache.kafka.common.utils.Utils;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 import java.util.List;
@@ -368,6 +368,7 @@ public class KafkaChannel implements AutoCloseable {
         return socket.getInetAddress().toString();
     }
 
+    // 注释2.1.4.3：确保只有一个send请求
     public void setSend(Send send) {
         if (this.send != null)
             throw new IllegalStateException("Attempt to begin a send operation with prior send operation still in progress, connection id is " + id);
@@ -394,6 +395,7 @@ public class KafkaChannel implements AutoCloseable {
         return result;
     }
 
+    //注释2.1.4.3：写方法完成时，send置空
     public Send write() throws IOException {
         Send result = null;
         if (send != null && send(send)) {
@@ -424,6 +426,7 @@ public class KafkaChannel implements AutoCloseable {
         return receive.readFrom(transportLayer);
     }
 
+    //注释2.1.4.3：发出请求
     private boolean send(Send send) throws IOException {
         midWrite = true;
         send.writeTo(transportLayer);

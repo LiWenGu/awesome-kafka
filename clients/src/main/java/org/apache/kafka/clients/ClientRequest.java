@@ -22,6 +22,7 @@ import org.apache.kafka.common.requests.RequestHeader;
 
 /**
  * A request being sent to the server. This holds both the network send as well as the client-level metadata.
+ * 注释2.1.2.1：发送服务端请求体
  */
 public final class ClientRequest {
 

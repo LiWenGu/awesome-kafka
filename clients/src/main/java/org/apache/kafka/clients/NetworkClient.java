@@ -28,17 +28,10 @@ import org.apache.kafka.common.network.NetworkReceive;
 import org.apache.kafka.common.network.Selectable;
 import org.apache.kafka.common.network.Send;
 import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.CommonFields;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.types.Struct;
-import org.apache.kafka.common.requests.AbstractRequest;
-import org.apache.kafka.common.requests.AbstractResponse;
-import org.apache.kafka.common.requests.ApiVersionsRequest;
-import org.apache.kafka.common.requests.ApiVersionsResponse;
-import org.apache.kafka.common.requests.MetadataRequest;
-import org.apache.kafka.common.requests.MetadataResponse;
-import org.apache.kafka.common.requests.RequestHeader;
-import org.apache.kafka.common.requests.ResponseHeader;
+import org.apache.kafka.common.requests.*;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
@@ -48,13 +41,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -63,6 +50,7 @@ import java.util.stream.Collectors;
  * user-facing producer and consumer clients.
  * <p>
  * This class is not thread-safe!
+ * 注释2.1.3：看客户端网络连接对象
  */
 public class NetworkClient implements KafkaClient {
 
@@ -504,6 +492,7 @@ public class NetworkClient implements KafkaClient {
                 request,
                 send,
                 now);
+        // 注释2.1.3.1：加入队列中
         this.inFlightRequests.add(inFlightRequest);
         selector.send(send);
     }
@@ -540,12 +529,19 @@ public class NetworkClient implements KafkaClient {
         // process completed actions
         long updatedNow = this.time.milliseconds();
         List<ClientResponse> responses = new ArrayList<>();
+        // 注释2.1.3.2：发送完成回调
         handleCompletedSends(responses, updatedNow);
+        // 注释2.1.3.2：响应接收回调
         handleCompletedReceives(responses, updatedNow);
+        // 注释2.1.3.2：断开连接回调
         handleDisconnections(responses, updatedNow);
+        // 注释2.1.3.2：处理连接回调
         handleConnections();
+        // 注释2.1.3.2：请求API版本号
         handleInitiateApiVersionRequests(updatedNow);
+        // 注释2.1.3.2：请求超时回调
         handleTimedOutRequests(responses, updatedNow);
+        // 注释2.1.3.2：响应完成回调
         completeResponses(responses);
 
         return responses;

@@ -24,6 +24,7 @@ import org.apache.kafka.common.requests.RequestHeader;
 /**
  * A response from the server. Contains both the body of the response as well as the correlated request
  * metadata that was originally sent.
+ * 注释2.1.3.3
  */
 public class ClientResponse {
 
